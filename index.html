@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" id="manifest-link">
+<title>执行记录</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2e38; --fg:#e8eaf0; --dim:#8b90a0; --acc:#4ade80; --bad:#f87171; --warn:#fbbf24; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system,"PingFang SC",sans-serif; padding-bottom:80px; }
+  .wrap { max-width:480px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 16px; }
+  h2 { font-size:16px; margin:20px 0 10px; color:var(--dim); font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .streakrow { display:flex; gap:12px; }
+  .streak { flex:1; text-align:center; }
+  .streak .num { font-size:40px; font-weight:700; }
+  .streak .lbl { color:var(--dim); font-size:13px; }
+  .streak .best { color:var(--dim); font-size:12px; margin-top:2px; }
+  label { display:block; font-size:13px; color:var(--dim); margin:10px 0 4px; }
+  input,select,textarea { width:100%; background:#11141a; border:1px solid var(--line); border-radius:10px; color:var(--fg); padding:10px 12px; font-size:16px; }
+  textarea { min-height:56px; resize:vertical; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; }
+  .btn { display:block; width:100%; border:none; border-radius:12px; padding:13px; font-size:16px; font-weight:600; margin-top:14px; background:var(--acc); color:#052e16; }
+  .btn.sec { background:#232833; color:var(--fg); border:1px solid var(--line); }
+  .btn.bad { background:var(--bad); color:#450a0a; }
+  .btn:disabled { opacity:.4; }
+  .chipbar { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { padding:8px 14px; border-radius:999px; background:#11141a; border:1px solid var(--line); color:var(--fg); font-size:14px; }
+  .chip.on { background:var(--acc); color:#052e16; border-color:var(--acc); font-weight:600; }
+  .chip.onr { background:var(--bad); color:#450a0a; border-color:var(--bad); font-weight:600; }
+  .muted { color:var(--dim); font-size:13px; }
+  .item { border-top:1px solid var(--line); padding:10px 0; font-size:14px; }
+  .item:first-child { border-top:none; }
+  .tag { display:inline-block; font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); margin-right:6px; }
+  .tag.ok { color:var(--acc); border-color:var(--acc); }
+  .tag.no { color:var(--bad); border-color:var(--bad); }
+  .tabs { position:fixed; left:0; right:0; bottom:0; display:flex; background:#14171d; border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  .tab { flex:1; text-align:center; padding:12px 0 14px; color:var(--dim); font-size:13px; }
+  .tab.on { color:var(--acc); font-weight:600; }
+  .hidden { display:none; }
+  .notice { background:#241a12; border:1px solid #5b3d1e; color:var(--warn); border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ 首页 ============ -->
+  <section id="page-home">
+    <h1>执行记录</h1>
+    <div class="card streakrow">
+      <div class="streak">
+        <div class="num" id="st-trade">0</div>
+        <div class="lbl">交易合规连续</div>
+        <div class="best" id="st-trade-best">最长 0</div>
+      </div>
+      <div class="streak">
+        <div class="num" id="st-smoke">0</div>
+        <div class="lbl">戒烟连续</div>
+        <div class="best" id="st-smoke-best">最长 0</div>
+      </div>
+    </div>
+    <div class="card" id="home-saved"></div>
+    <h2>数据</h2>
+    <div class="card">
+      <button class="btn sec" id="btn-export-json">导出 JSON（全量备份）</button>
+      <button class="btn sec" id="btn-export-csv">导出交易 CSV（归档 mdata）</button>
+      <label style="margin-top:14px">导入备份（选择之前导出的 JSON）</label>
+      <input type="file" id="import-json" accept=".json,application/json">
+      <p class="muted" style="margin-top:10px">数据只存在本机浏览器。换手机/清缓存前请先导出备份。时区：设备本地时间。</p>
+    </div>
+  </section>
+
+  <!-- ============ 交易 ============ -->
+  <section id="page-trade" class="hidden">
+    <h1>交易执行</h1>
+    <div id="trade-locked" class="notice hidden">当日的执行核对已提交并锁定，不可修改。</div>
+
+    <h2>盘前计划 <span class="muted" id="plan-status"></span></h2>
+    <div class="card">
+      <label>日期</label><input type="date" id="p-date">
+      <label>方向</label>
+      <div class="chipbar" id="p-direction">
+        <button class="chip" data-v="多">多</button>
+        <button class="chip" data-v="空">空</button>
+        <button class="chip" data-v="观望">观望</button>
+      </div>
+      <label>关注的结构/价位</label><input id="p-structure" placeholder="例如 前高 4120 回踩">
+      <label>入场方式</label>
+      <div class="chipbar" id="p-method">
+        <button class="chip" data-v="吞没">吞没</button>
+        <button class="chip" data-v="N字">N字</button>
+        <button class="chip" data-v="FVG">FVG</button>
+        <button class="chip" data-v="IFVG">IFVG</button>
+      </div>
+      <div class="row">
+        <div><label>计划进场位</label><input id="p-entry" inputmode="decimal" placeholder="价格"></div>
+        <div><label>计划单数上限</label><input id="p-maxorders" inputmode="numeric" placeholder="笔"></div>
+      </div>
+      <label>失效条件</label><input id="p-invalidation" placeholder="例如 跌破 4100 计划作废">
+      <button class="btn" id="btn-save-plan">保存计划</button>
+    </div>
+
+    <h2>逐笔记录</h2>
+    <div class="card">
+      <div class="row">
+        <div><label>日期</label><input type="date" id="t-date"></div>
+        <div><label>时间</label><input type="time" id="t-time"></div>
+      </div>
+      <label>方向</label>
+      <div class="chipbar" id="t-direction">
+        <button class="chip" data-v="多单">多单</button>
+        <button class="chip" data-v="空单">空单</button>
+      </div>
+      <div class="row">
+        <div><label>初始止损价</label><input id="t-sl" inputmode="decimal"></div>
+        <div><label>手数</label><input id="t-lots" inputmode="decimal"></div>
+      </div>
+      <div class="row">
+        <div>
+          <label>出场类型</label>
+          <select id="t-exit">
+            <option value="止损">止损</option><option value="止盈">止盈</option>
+            <option value="手动">手动</option><option value="时间">时间</option><option value="持仓中">持仓中</option>
+          </select>
+        </div>
+        <div>
+          <label>触发类型</label>
+          <select id="t-trigger">
+            <option value="吞没">吞没</option><option value="N字">N字</option>
+            <option value="FVG">FVG</option><option value="IFVG">IFVG</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>时段</label>
+          <select id="t-session"><option value="亚盘">亚盘</option><option value="欧盘">欧盘</option><option value="美盘">美盘</option></select>
+        </div>
+        <div><label>点差</label><input id="t-spread" inputmode="decimal" placeholder="美元"></div>
+      </div>
+      <label>盈亏 USD（可后补）</label><input id="t-pnl" inputmode="decimal" placeholder="平仓后回来填">
+      <button class="btn" id="btn-save-trade">保存这一笔</button>
+    </div>
+
+    <h2>执行核对（当日）</h2>
+    <div class="card">
+      <label>今天的计划，执行到位了吗？</label>
+      <div class="chipbar" id="c-ok">
+        <button class="chip" data-v="yes">是</button>
+        <button class="chip" data-v="no">否</button>
+      </div>
+      <div id="c-reason-wrap" class="hidden">
+        <label>偏离原因</label><textarea id="c-reason" placeholder="哪里偏离了，为什么"></textarea>
+      </div>
+      <button class="btn" id="btn-save-check">提交核对（次日锁定）</button>
+    </div>
+
+    <h2>当日记录</h2>
+    <div class="card" id="day-view"></div>
+  </section>
+
+  <!-- ============ 戒烟 ============ -->
+  <section id="page-smoke" class="hidden">
+    <h1>戒烟</h1>
+    <div class="card">
+      <div class="streakrow">
+        <div class="streak">
+          <div class="num" id="sm-streak">0</div>
+          <div class="lbl">连续未抽（天）</div>
+        </div>
+        <div class="streak">
+          <div class="num" id="sm-saved">¥0</div>
+          <div class="lbl">累计省下</div>
+        </div>
+      </div>
+    </div>
+    <h2>打卡</h2>
+    <div class="card">
+      <label>日期（只能补前一天）</label><input type="date" id="s-date">
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btn-nosmoke" style="margin-top:0">没抽</button>
+        <button class="btn bad" id="btn-smoked" style="margin-top:0">抽了</button>
+      </div>
+      <p class="muted" id="s-status" style="margin-top:10px"></p>
+    </div>
+    <h2>省钱配置</h2>
+    <div class="card">
+      <div class="row">
+        <div><label>原来每天（支）</label><input id="cfg-perday" inputmode="numeric" placeholder="如 10"></div>
+        <div><label>每包价格（元）</label><input id="cfg-price" inputmode="decimal" placeholder="如 25"></div>
+      </div>
+      <label>每包支数</label><input id="cfg-pack" inputmode="numeric" value="20">
+      <button class="btn sec" id="btn-save-cfg">保存配置</button>
+    </div>
+    <h2>最近记录</h2>
+    <div class="card" id="sm-history"></div>
+  </section>
+
+</div>
+
+<nav class="tabs">
+  <div class="tab on" data-page="home">首页</div>
+  <div class="tab" data-page="trade">交易</div>
+  <div class="tab" data-page="smoke">戒烟</div>
+</nav>
+
+<script>
+(function(){
+"use strict";
+/* ---------------- store ---------------- */
+var KEY = 'exec_tracker_v1';
+var blank = { plans:{}, trades:[], checks:{}, checkins:{}, config:{perDay:'',price:'',pack:20} };
+var db;
+try { db = JSON.parse(localStorage.getItem(KEY)) || JSON.parse(JSON.stringify(blank)); }
+catch(e){ db = JSON.parse(JSON.stringify(blank)); }
+['plans','trades','checks','checkins','config'].forEach(function(k){ if(!db[k]) db[k]=JSON.parse(JSON.stringify(blank[k])); });
+function save(){ localStorage.setItem(KEY, JSON.stringify(db)); }
+
+/* ---------------- utils ---------------- */
+function today(){ var d=new Date(); return fmt(d); }
+function fmt(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function addDays(ds,n){ var d=new Date(ds+'T12:00:00'); d.setDate(d.getDate()+n); return fmt(d); }
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function chips(id, onPick){
+  var el=$(id);
+  el.addEventListener('click',function(e){
+    var b=e.target.closest('.chip'); if(!b) return;
+    el.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('on','onr'); });
+    b.classList.add(b.classList.contains('no-chip')?'onr':'on');
+    if(onPick) onPick(b.dataset.v);
+  });
+  return {
+    get:function(){ var b=el.querySelector('.chip.on,.chip.onr'); return b?b.dataset.v:''; },
+    set:function(v){ el.querySelectorAll('.chip').forEach(function(c){ c.classList.toggle('on', c.dataset.v===v); }); }
+  };
+}
+
+/* ---------------- streak 推导 ---------------- */
+function tradeViolation(ds){
+  if(db.checks[ds] && db.checks[ds].ok===false) return true;
+  return db.trades.some(function(t){ return t.date===ds && t.exit==='手动'; });
+}
+function tradeCompliant(ds){
+  return !!(db.plans[ds] && db.checks[ds] && db.checks[ds].ok===true && !tradeViolation(ds));
+}
+function calcTradeStreak(){
+  // 连续合规天（跳过无记录日；违规日断开）
+  var days={};
+  Object.keys(db.plans).forEach(function(d){ days[d]=1; });
+  Object.keys(db.checks).forEach(function(d){ days[d]=1; });
+  db.trades.forEach(function(t){ days[t.date]=1; });
+  var sorted=Object.keys(days).sort();
+  var cur=0, best=0, run=0;
+  sorted.forEach(function(d){
+    if(tradeCompliant(d)){ run++; } else if(tradeViolation(d) || db.checks[d]){ run=0; }
+    best=Math.max(best,run);
+  });
+  cur=run;
+  return {cur:cur, best:best};
+}
+function calcSmokeStreak(){
+  // 从今天（未打卡则昨天）往回数连续"没抽"
+  var start = db.checkins[today()] ? today() : addDays(today(),-1);
+  var n=0, d=start;
+  while(db.checkins[d] && db.checkins[d].smoked===false){ n++; d=addDays(d,-1); }
+  // 历史最长
+  var days=Object.keys(db.checkins).sort(), run=0, best=0;
+  days.forEach(function(k){
+    if(db.checkins[k].smoked===false){
+      var prev=addDays(k,-1);
+      run = (db.checkins[prev] && db.checkins[prev].smoked===false) ? run+1 : 1;
+      best=Math.max(best,run);
+    }
+  });
+  return {cur:n, best:best};
+}
+function smokeSaved(){
+  var perDay=parseFloat(db.config.perDay), price=parseFloat(db.config.price), pack=parseFloat(db.config.pack)||20;
+  if(!perDay||!price) return null;
+  var days=Object.keys(db.checkins).filter(function(k){return db.checkins[k].smoked===false;}).length;
+  return Math.round(days*perDay/pack*price*100)/100;
+}
+
+/* ---------------- 导航 ---------------- */
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click',function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on');});
+    t.classList.add('on');
+    ['home','trade','smoke'].forEach(function(p){ $('page-'+p).classList.toggle('hidden', p!==t.dataset.page); });
+    renderAll();
+  });
+});
+
+/* ---------------- 交易页 ---------------- */
+var pDir=chips('p-direction'), pMethod=chips('p-method'), tDir=chips('t-direction');
+var cOk=chips('c-ok',function(v){ $('c-reason-wrap').classList.toggle('hidden', v!=='no'); });
+
+$('p-date').value=today(); $('t-date').value=today();
+var now=new Date();
+$('t-time').value=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+var sDate=$('s-date'); sDate.value=today(); sDate.max=today(); sDate.min=addDays(today(),-1);
+
+$('p-date').addEventListener('change',loadPlan);
+$('t-date').addEventListener('change',renderDayView);
+
+function loadPlan(){
+  var ds=$('p-date').value, p=db.plans[ds];
+  pDir.set(p?p.direction:''); pMethod.set(p?p.method:'');
+  $('p-structure').value=p?p.structure:''; $('p-entry').value=p?p.entry:'';
+  $('p-maxorders').value=p?p.maxOrders:''; $('p-invalidation').value=p?p.invalidation:'';
+  $('plan-status').textContent=p?('已保存 · 更新于 '+p.updatedAt):'（今天还没写）';
+}
+$('btn-save-plan').addEventListener('click',function(){
+  var ds=$('p-date').value;
+  if(!pDir.get()){ alert('选一下方向'); return; }
+  db.plans[ds]={ direction:pDir.get(), structure:$('p-structure').value.trim(), method:pMethod.get(),
+    entry:$('p-entry').value.trim(), maxOrders:$('p-maxorders').value.trim(),
+    invalidation:$('p-invalidation').value.trim(), updatedAt:new Date().toLocaleString('sv-SE') };
+  save(); loadPlan(); renderDayView(); alert('计划已保存');
+});
+
+$('btn-save-trade').addEventListener('click',function(){
+  var ds=$('t-date').value;
+  if(!tDir.get()){ alert('选一下方向'); return; }
+  db.trades.push({ id:Date.now(), date:ds, time:$('t-time').value, direction:tDir.get(),
+    sl:$('t-sl').value.trim(), lots:$('t-lots').value.trim(), exit:$('t-exit').value,
+    trigger:$('t-trigger').value, session:$('t-session').value,
+    spread:$('t-spread').value.trim(), pnl:$('t-pnl').value.trim(), createdAt:new Date().toLocaleString('sv-SE') });
+  save(); renderDayView(); renderHome();
+  ['t-sl','t-lots','t-spread','t-pnl'].forEach(function(i){$(i).value='';});
+  alert('已记录');
+});
+
+function checkLocked(ds){ return today()>ds && db.checks[ds]; }
+$('btn-save-check').addEventListener('click',function(){
+  var ds=$('t-date').value;
+  if(checkLocked(ds)){ alert('当日核对已锁定'); return; }
+  var v=cOk.get();
+  if(!v){ alert('选 是 或 否'); return; }
+  var reason=$('c-reason').value.trim();
+  if(v==='no'&&!reason){ alert('写一下偏离原因'); return; }
+  db.checks[ds]={ ok:v==='yes', reason:reason, submittedAt:new Date().toLocaleString('sv-SE') };
+  save(); renderDayView(); renderHome(); alert('核对已提交');
+});
+
+function renderDayView(){
+  var ds=$('t-date').value, p=db.plans[ds];
+  var html='';
+  if(p){ html+='<div class="item"><span class="tag ok">计划</span>'+esc(p.direction)+' · '+esc(p.method||'—')+' · 进场 '+esc(p.entry||'—')+' · 上限 '+esc(p.maxOrders||'—')+' 笔<br><span class="muted">'+esc(p.structure||'')+'｜失效：'+esc(p.invalidation||'—')+'</span></div>'; }
+  else html+='<div class="item muted">当日还没有盘前计划</div>';
+  var ts=db.trades.filter(function(t){return t.date===ds;});
+  ts.forEach(function(t,i){
+    var bad=t.exit==='手动';
+    html+='<div class="item"><span class="tag'+(bad?' no':'')+'">'+(i+1)+'</span>'+esc(t.time)+' '+esc(t.direction)+' '+esc(t.lots||'?')+'手 · SL '+esc(t.sl||'—')+' · '+esc(t.exit)+' · '+esc(t.trigger)+' · '+esc(t.session)+(t.pnl!==''&&t.pnl!=null?(' · '+esc(t.pnl)+' USD'):'')+'</div>';
+  });
+  var c=db.checks[ds];
+  if(c){ html+='<div class="item"><span class="tag '+(c.ok?'ok':'no')+'">'+(c.ok?'执行到位':'偏离')+'</span>'+(c.ok?'':esc(c.reason))+' <span class="muted">'+esc(c.submittedAt)+'</span></div>'; }
+  var locked=checkLocked(ds);
+  $('trade-locked').classList.toggle('hidden',!locked);
+  $('btn-save-check').disabled=!!locked;
+  if(c){ cOk.set(c.ok?'yes':'no'); $('c-reason').value=c.reason||''; $('c-reason-wrap').classList.toggle('hidden',c.ok); }
+  $('day-view').innerHTML=html;
+}
+
+/* ---------------- 戒烟页 ---------------- */
+function markSmoke(smoked){
+  var ds=$('s-date').value;
+  if(ds!==today() && ds!==addDays(today(),-1)){ alert('只能补前一天'); return; }
+  db.checkins[ds]={ smoked:smoked, at:new Date().toLocaleString('sv-SE') };
+  save(); renderSmoke(); renderHome();
+}
+$('btn-nosmoke').addEventListener('click',function(){ markSmoke(false); });
+$('btn-smoked').addEventListener('click',function(){ markSmoke(true); });
+$('btn-save-cfg').addEventListener('click',function(){
+  db.config.perDay=$('cfg-perday').value.trim(); db.config.price=$('cfg-price').value.trim(); db.config.pack=$('cfg-pack').value.trim()||20;
+  save(); renderSmoke(); renderHome(); alert('配置已保存');
+});
+function renderSmoke(){
+  var s=calcSmokeStreak();
+  $('sm-streak').textContent=s.cur;
+  var saved=smokeSaved();
+  $('sm-saved').textContent=saved==null?'未配置':'¥'+saved;
+  var ci=db.checkins[$('s-date').value];
+  $('s-status').textContent=ci?($('s-date').value+' 已打卡：'+(ci.smoked?'抽了':'没抽')):'';
+  $('cfg-perday').value=db.config.perDay||''; $('cfg-price').value=db.config.price||''; $('cfg-pack').value=db.config.pack||20;
+  var days=Object.keys(db.checkins).sort().reverse().slice(0,14);
+  $('sm-history').innerHTML=days.length?days.map(function(d){
+    return '<div class="item"><span class="tag '+(db.checkins[d].smoked?'no':'ok')+'">'+(db.checkins[d].smoked?'抽了':'没抽')+'</span>'+d+'</div>';
+  }).join(''):'<div class="item muted">还没有记录</div>';
+}
+
+/* ---------------- 首页 ---------------- */
+function renderHome(){
+  var t=calcTradeStreak(), s=calcSmokeStreak();
+  $('st-trade').textContent=t.cur; $('st-trade-best').textContent='最长 '+t.best;
+  $('st-smoke').textContent=s.cur; $('st-smoke-best').textContent='最长 '+s.best;
+  var saved=smokeSaved();
+  var planToday=db.plans[today()], checkToday=db.checks[today()];
+  var msg='';
+  msg+='<div class="item">今日计划：'+(planToday?('<span class="tag ok">已写</span>'):'<span class="tag no">未写</span>')+'</div>';
+  msg+='<div class="item">今日核对：'+(checkToday?(checkToday.ok?'<span class="tag ok">到位</span>':'<span class="tag no">偏离</span>'):'<span class="muted">未提交</span>')+'</div>';
+  if(saved!=null) msg+='<div class="item">戒烟已省：<b>¥'+saved+'</b></div>';
+  $('home-saved').innerHTML=msg;
+}
+
+/* ---------------- 导出 ---------------- */
+function dl(name,content,mime){
+  var blob=new Blob([content],{type:mime});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(a.href);},1000);
+}
+$('btn-export-json').addEventListener('click',function(){
+  dl('app_backup_'+today().replace(/-/g,'')+'.json', JSON.stringify(db,null,2), 'application/json');
+});
+$('btn-export-csv').addEventListener('click',function(){
+  var head=['日期','时间','方向','手数','初始止损价','出场类型','触发类型','时段','点差','盈亏USD'];
+  var rows=db.trades.map(function(t){ return [t.date,t.time,t.direction,t.lots,t.sl,t.exit,t.trigger,t.session,t.spread,t.pnl]; });
+  var csv='﻿# 设备本地时间口径（非MT5服务器时间）\n'+head.join(',')+'\n'+rows.map(function(r){
+    return r.map(function(c){ c=String(c==null?'':c); return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c; }).join(',');
+  }).join('\n');
+  dl('app_trades_'+today().replace(/-/g,'')+'.csv', csv, 'text/csv');
+});
+$('import-json').addEventListener('change',function(e){
+  var f=e.target.files[0]; if(!f) return;
+  var r=new FileReader();
+  r.onload=function(){
+    try{
+      var d=JSON.parse(r.result);
+      if(!d||typeof d!=='object'||!d.trades) throw new Error('bad');
+      db=d; save(); renderAll(); alert('导入成功');
+    }catch(err){ alert('文件格式不对'); }
+  };
+  r.readAsText(f);
+});
+
+/* ---------------- manifest（最小 PWA） ---------------- */
+try{
+  var manifest={ name:'执行记录', short_name:'执行记录', start_url:location.href, display:'standalone',
+    background_color:'#0f1115', theme_color:'#0f1115' };
+  $('manifest-link').href='data:application/manifest+json,'+encodeURIComponent(JSON.stringify(manifest));
+}catch(e){}
+
+/* ---------------- 启动 ---------------- */
+function renderAll(){ loadPlan(); renderDayView(); renderSmoke(); renderHome(); }
+renderAll();
+})();
+</script>
+</body>
+</html>
