@@ -182,6 +182,22 @@
       </div>
     </div>
     <button class="btn bad" id="btn-puff" style="font-size:20px;padding:18px">抽了一根</button>
+    <h2>想抽 → 缓解</h2>
+    <div class="card" id="craving-form">
+      <label>场景（会成为标签，如：饭后 / 压力大 / 上厕所 / 喝酒）</label>
+      <input id="cr-tag" placeholder="此刻什么场景">
+      <div class="chipbar" id="cr-recent" style="margin-top:8px"></div>
+      <button class="btn sec" id="btn-crave-start" style="background:var(--warn);color:#451a03">想抽了</button>
+    </div>
+    <div class="card hidden" id="craving-active">
+      <div class="muted">正在想抽 · <b id="cr-active-tag"></b></div>
+      <div style="font-size:34px;font-weight:700;margin:8px 0" id="cr-elapsed">0 分钟</div>
+      <div class="muted" style="margin-bottom:8px">什么都不用做，它自己会走。看看这次要多久。</div>
+      <button class="btn" id="btn-crave-end">缓解了</button>
+    </div>
+    <h2>想抽记录</h2>
+    <div class="card" id="cr-stats"></div>
+    <div class="card" id="cr-history"></div>
     <h2>补记（限昨天起）</h2>
     <div class="card">
       <label>时间</label><input type="datetime-local" id="s-when">
@@ -214,11 +230,11 @@
 "use strict";
 /* ---------------- store ---------------- */
 var KEY = 'exec_tracker_v1';
-var blank = { plans:{}, trades:[], checks:{}, smokes:[], config:{perDay:'',price:'',pack:20} };
+var blank = { plans:{}, trades:[], checks:{}, smokes:[], cravings:[], config:{perDay:'',price:'',pack:20} };
 var db;
 try { db = JSON.parse(localStorage.getItem(KEY)) || JSON.parse(JSON.stringify(blank)); }
 catch(e){ db = JSON.parse(JSON.stringify(blank)); }
-['plans','trades','checks','smokes','config'].forEach(function(k){ if(!db[k]) db[k]=JSON.parse(JSON.stringify(blank[k])); });
+['plans','trades','checks','smokes','cravings','config'].forEach(function(k){ if(!db[k]) db[k]=JSON.parse(JSON.stringify(blank[k])); });
 delete db.checkins;
 function save(){ localStorage.setItem(KEY, JSON.stringify(db)); }
 
@@ -383,6 +399,64 @@ function renderDayView(){
   $('day-view').innerHTML=html;
 }
 
+/* ---------------- 想抽 → 缓解 ---------------- */
+function activeCraving(){ return db.cravings.find(function(c){return !c.end;}) || null; }
+function craveStart(){
+  var tag=$('cr-tag').value.trim();
+  if(!tag){ alert('写一下场景'); return; }
+  if(activeCraving()){ alert('上一次还没点缓解'); return; }
+  db.cravings.push({ id:Date.now(), start:nowStr(), tag:tag, end:null });
+  $('cr-tag').value='';
+  save(); renderSmoke();
+}
+function craveEnd(){
+  var c=activeCraving(); if(!c) return;
+  c.end=nowStr(); save(); renderSmoke(); renderHome();
+}
+function craveMins(c){
+  var t=c.end?c.end.replace(' ','T'):new Date().toISOString();
+  return Math.max(0, Math.round((new Date(t)-new Date(c.start.replace(' ','T')))/60000));
+}
+function craveGaveIn(c){
+  // 想抽窗口内（含结束后5分钟缓冲）有吸烟记录 = 没忍住
+  if(!c.end) return false;
+  var s=new Date(c.start.replace(' ','T')).getTime(), e=new Date(c.end.replace(' ','T')).getTime()+5*60000;
+  return db.smokes.some(function(p){ var t=new Date(p.replace(' ','T')).getTime(); return t>=s && t<=e; });
+}
+function renderCraving(){
+  var act=activeCraving();
+  $('craving-form').classList.toggle('hidden', !!act);
+  $('craving-active').classList.toggle('hidden', !act);
+  if(act){
+    $('cr-active-tag').textContent=act.tag;
+    $('cr-elapsed').textContent=craveMins(act)+' 分钟';
+  }
+  // 常用场景标签
+  var tags={};
+  db.cravings.forEach(function(c){ tags[c.tag]=(tags[c.tag]||0)+1; });
+  var top=Object.keys(tags).sort(function(a,b){return tags[b]-tags[a];}).slice(0,6);
+  $('cr-recent').innerHTML=top.map(function(t){return '<button class="chip" data-t="'+esc(t)+'">'+esc(t)+'</button>';}).join('');
+  $('cr-recent').querySelectorAll('.chip').forEach(function(b){
+    b.addEventListener('click',function(){ $('cr-tag').value=b.dataset.t; });
+  });
+  // 统计
+  var ended=db.cravings.filter(function(c){return c.end;});
+  var held=ended.filter(function(c){return !craveGaveIn(c);});
+  var avg=ended.length?Math.round(ended.reduce(function(s,c){return s+craveMins(c);},0)/ended.length):null;
+  var html='<div class="item">想抽次数：<b>'+db.cravings.length+'</b> · 忍住：<b style="color:var(--acc)">'+held.length+'</b> · 没忍住：<b style="color:var(--bad)">'+(ended.length-held.length)+'</b></div>';
+  if(avg!=null) html+='<div class="item">平均缓解时长：<b>'+avg+' 分钟</b></div>';
+  $('cr-stats').innerHTML=db.cravings.length?html:'<div class="item muted">还没有记录</div>';
+  // 历史
+  var list=db.cravings.slice().reverse().slice(0,10);
+  $('cr-history').innerHTML=list.length?list.map(function(c){
+    var st=c.end?(craveGaveIn(c)?'<span class="tag no">没忍住</span>':'<span class="tag ok">忍住了</span>'):'<span class="tag">进行中</span>';
+    return '<div class="item">'+st+'<b>'+esc(c.tag)+'</b> · '+esc(c.start.slice(5))+(c.end?' · '+craveMins(c)+' 分钟':'')+'</div>';
+  }).join(''):'<div class="item muted">——</div>';
+}
+$('btn-crave-start').addEventListener('click',craveStart);
+$('btn-crave-end').addEventListener('click',craveEnd);
+setInterval(function(){ if(activeCraving()) $('cr-elapsed').textContent=craveMins(activeCraving())+' 分钟'; },30000);
+
 /* ---------------- 戒烟页 ---------------- */
 function nowStr(){ return new Date().toLocaleString('sv-SE').slice(0,16); }
 function addPuff(ts){
@@ -422,6 +496,7 @@ function renderSmoke(){
     }).join('');
   }
   $('sm-history').innerHTML=html;
+  renderCraving();
 }
 
 /* ---------------- 首页 ---------------- */
