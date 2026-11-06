@@ -170,25 +170,25 @@
     <div class="card">
       <div class="streakrow">
         <div class="streak">
-          <div class="num" id="sm-streak">0</div>
-          <div class="lbl">连续未抽（天）</div>
+          <div class="num" id="sm-today">0</div>
+          <div class="lbl">今天已抽（支）</div>
+          <div class="best" id="sm-last"></div>
         </div>
         <div class="streak">
-          <div class="num" id="sm-saved">¥0</div>
-          <div class="lbl">累计省下</div>
+          <div class="num" id="sm-streak">0</div>
+          <div class="lbl">连续零吸烟（天）</div>
+          <div class="best" id="sm-saved"></div>
         </div>
       </div>
     </div>
-    <h2>打卡</h2>
+    <button class="btn bad" id="btn-puff" style="font-size:20px;padding:18px">抽了一根</button>
+    <h2>补记（限昨天起）</h2>
     <div class="card">
-      <label>日期（只能补前一天）</label><input type="date" id="s-date">
-      <div class="row" style="margin-top:10px">
-        <button class="btn" id="btn-nosmoke" style="margin-top:0">没抽</button>
-        <button class="btn bad" id="btn-smoked" style="margin-top:0">抽了</button>
-      </div>
+      <label>时间</label><input type="datetime-local" id="s-when">
+      <button class="btn sec" id="btn-puff-backfill">补记这一根</button>
       <p class="muted" id="s-status" style="margin-top:10px"></p>
     </div>
-    <h2>省钱配置</h2>
+    <h2>省钱基准</h2>
     <div class="card">
       <div class="row">
         <div><label>原来每天（支）</label><input id="cfg-perday" inputmode="numeric" placeholder="如 10"></div>
@@ -197,7 +197,7 @@
       <label>每包支数</label><input id="cfg-pack" inputmode="numeric" value="20">
       <button class="btn sec" id="btn-save-cfg">保存配置</button>
     </div>
-    <h2>最近记录</h2>
+    <h2>最近 14 天</h2>
     <div class="card" id="sm-history"></div>
   </section>
 
@@ -214,11 +214,12 @@
 "use strict";
 /* ---------------- store ---------------- */
 var KEY = 'exec_tracker_v1';
-var blank = { plans:{}, trades:[], checks:{}, checkins:{}, config:{perDay:'',price:'',pack:20} };
+var blank = { plans:{}, trades:[], checks:{}, smokes:[], config:{perDay:'',price:'',pack:20} };
 var db;
 try { db = JSON.parse(localStorage.getItem(KEY)) || JSON.parse(JSON.stringify(blank)); }
 catch(e){ db = JSON.parse(JSON.stringify(blank)); }
-['plans','trades','checks','checkins','config'].forEach(function(k){ if(!db[k]) db[k]=JSON.parse(JSON.stringify(blank[k])); });
+['plans','trades','checks','smokes','config'].forEach(function(k){ if(!db[k]) db[k]=JSON.parse(JSON.stringify(blank[k])); });
+delete db.checkins;
 function save(){ localStorage.setItem(KEY, JSON.stringify(db)); }
 
 /* ---------------- utils ---------------- */
@@ -264,27 +265,41 @@ function calcTradeStreak(){
   cur=run;
   return {cur:cur, best:best};
 }
+/* ---------------- 戒烟：按根记录 ---------------- */
+function smokeCount(ds){ return db.smokes.filter(function(s){return s.slice(0,10)===ds;}).length; }
+function firstSmokeDay(){ return db.smokes.length ? db.smokes.slice().sort()[0].slice(0,10) : null; }
 function calcSmokeStreak(){
-  // 从今天（未打卡则昨天）往回数连续"没抽"
-  var start = db.checkins[today()] ? today() : addDays(today(),-1);
-  var n=0, d=start;
-  while(db.checkins[d] && db.checkins[d].smoked===false){ n++; d=addDays(d,-1); }
-  // 历史最长
-  var days=Object.keys(db.checkins).sort(), run=0, best=0;
+  // 连续零吸烟天数（只数完整过去的天；今天若还是 0 则"进行中"单独显示）
+  var first=firstSmokeDay(); if(!first) return {cur:0,best:0,pending:0};
+  var days=[], d=first, t=today();
+  while(d<=t){ days.push(d); d=addDays(d,1); }
+  var run=0, best=0;
   days.forEach(function(k){
-    if(db.checkins[k].smoked===false){
-      var prev=addDays(k,-1);
-      run = (db.checkins[prev] && db.checkins[prev].smoked===false) ? run+1 : 1;
-      best=Math.max(best,run);
-    }
+    if(smokeCount(k)===0){ run++; best=Math.max(best,run); }
+    else run=0;
   });
-  return {cur:n, best:best};
+  var todayZero = smokeCount(t)===0;
+  // 当前连续：到今天为止；若今天已有记录，则算到昨天为止
+  var cur=0, d2 = todayZero ? t : addDays(t,-1);
+  while(d2>=first && smokeCount(d2)===0){ cur++; d2=addDays(d2,-1); }
+  return {cur:cur, best:best, pending: todayZero?1:0};
 }
 function smokeSaved(){
   var perDay=parseFloat(db.config.perDay), price=parseFloat(db.config.price), pack=parseFloat(db.config.pack)||20;
   if(!perDay||!price) return null;
-  var days=Object.keys(db.checkins).filter(function(k){return db.checkins[k].smoked===false;}).length;
-  return Math.round(days*perDay/pack*price*100)/100;
+  var first=firstSmokeDay(); if(!first) return 0;
+  var total=0, d=first, t=today();
+  while(d<=t){ total+=Math.max(0, perDay-smokeCount(d)); d=addDays(d,1); }
+  return Math.round(total/pack*price*100)/100;
+}
+function lastSmokeText(){
+  if(!db.smokes.length) return '';
+  var last=db.smokes.slice().sort().reverse()[0];
+  var mins=Math.max(0, Math.round((Date.now()-new Date(last.replace(' ','T'))) /60000));
+  if(mins<60) return mins+' 分钟前';
+  var h=Math.floor(mins/60);
+  if(h<24) return h+' 小时前';
+  return Math.floor(h/24)+' 天前';
 }
 
 /* ---------------- 导航 ---------------- */
@@ -304,7 +319,7 @@ var cOk=chips('c-ok',function(v){ $('c-reason-wrap').classList.toggle('hidden', 
 $('p-date').value=today(); $('t-date').value=today();
 var now=new Date();
 $('t-time').value=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
-var sDate=$('s-date'); sDate.value=today(); sDate.max=today(); sDate.min=addDays(today(),-1);
+var sWhen=$('s-when'); sWhen.max=nowStr().replace(' ','T'); sWhen.min=addDays(today(),-1)+'T00:00';
 
 $('p-date').addEventListener('change',loadPlan);
 $('t-date').addEventListener('change',renderDayView);
@@ -369,30 +384,44 @@ function renderDayView(){
 }
 
 /* ---------------- 戒烟页 ---------------- */
-function markSmoke(smoked){
-  var ds=$('s-date').value;
-  if(ds!==today() && ds!==addDays(today(),-1)){ alert('只能补前一天'); return; }
-  db.checkins[ds]={ smoked:smoked, at:new Date().toLocaleString('sv-SE') };
-  save(); renderSmoke(); renderHome();
+function nowStr(){ return new Date().toLocaleString('sv-SE').slice(0,16); }
+function addPuff(ts){
+  var ds=ts.slice(0,10);
+  if(ds!==today() && ds!==addDays(today(),-1)){ alert('只能补记昨天起的'); return false; }
+  db.smokes.push(ts); save(); renderSmoke(); renderHome(); return true;
 }
-$('btn-nosmoke').addEventListener('click',function(){ markSmoke(false); });
-$('btn-smoked').addEventListener('click',function(){ markSmoke(true); });
+$('btn-puff').addEventListener('click',function(){
+  if(addPuff(nowStr())){ $('s-status').textContent='已记录 '+nowStr(); }
+});
+$('btn-puff-backfill').addEventListener('click',function(){
+  var v=$('s-when').value;
+  if(!v){ alert('选一下时间'); return; }
+  if(addPuff(v.replace('T',' '))){ $('s-status').textContent='已补记 '+v.replace('T',' '); $('s-when').value=''; }
+});
 $('btn-save-cfg').addEventListener('click',function(){
   db.config.perDay=$('cfg-perday').value.trim(); db.config.price=$('cfg-price').value.trim(); db.config.pack=$('cfg-pack').value.trim()||20;
   save(); renderSmoke(); renderHome(); alert('配置已保存');
 });
 function renderSmoke(){
   var s=calcSmokeStreak();
+  $('sm-today').textContent=smokeCount(today());
+  $('sm-last').textContent=db.smokes.length?('上一根：'+lastSmokeText()):'';
   $('sm-streak').textContent=s.cur;
   var saved=smokeSaved();
-  $('sm-saved').textContent=saved==null?'未配置':'¥'+saved;
-  var ci=db.checkins[$('s-date').value];
-  $('s-status').textContent=ci?($('s-date').value+' 已打卡：'+(ci.smoked?'抽了':'没抽')):'';
+  $('sm-saved').textContent=(saved==null?'设基准算省钱':'已省 ¥'+saved)+' · 最长 '+s.best;
   $('cfg-perday').value=db.config.perDay||''; $('cfg-price').value=db.config.price||''; $('cfg-pack').value=db.config.pack||20;
-  var days=Object.keys(db.checkins).sort().reverse().slice(0,14);
-  $('sm-history').innerHTML=days.length?days.map(function(d){
-    return '<div class="item"><span class="tag '+(db.checkins[d].smoked?'no':'ok')+'">'+(db.checkins[d].smoked?'抽了':'没抽')+'</span>'+d+'</div>';
-  }).join(''):'<div class="item muted">还没有记录</div>';
+  // 最近14天
+  var first=firstSmokeDay(), html='';
+  if(!first){ html='<div class="item muted">还没有记录</div>'; }
+  else{
+    var days=[], d=addDays(today(),-13); if(d<first) d=first;
+    for(var k=d;k<=today();k=addDays(k,1)) days.push(k);
+    html=days.reverse().map(function(k){
+      var c=smokeCount(k);
+      return '<div class="item"><span class="tag '+(c===0?'ok':'no')+'">'+(c===0?'零':'×'+c)+'</span>'+k+(k===today()?'（进行中）':'')+'</div>';
+    }).join('');
+  }
+  $('sm-history').innerHTML=html;
 }
 
 /* ---------------- 首页 ---------------- */
@@ -405,6 +434,8 @@ function renderHome(){
   var msg='';
   msg+='<div class="item">今日计划：'+(planToday?('<span class="tag ok">已写</span>'):'<span class="tag no">未写</span>')+'</div>';
   msg+='<div class="item">今日核对：'+(checkToday?(checkToday.ok?'<span class="tag ok">到位</span>':'<span class="tag no">偏离</span>'):'<span class="muted">未提交</span>')+'</div>';
+  var tc=smokeCount(today());
+  msg+='<div class="item">今日吸烟：'+(tc===0?'<span class="tag ok">0 支</span>':'<span class="tag no">'+tc+' 支</span>')+'</div>';
   if(saved!=null) msg+='<div class="item">戒烟已省：<b>¥'+saved+'</b></div>';
   $('home-saved').innerHTML=msg;
 }
